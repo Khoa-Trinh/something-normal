@@ -1,160 +1,151 @@
-import struct
+from pathlib import Path
 
+import cv2
 import numpy as np
-from numba import jit, prange
-from PIL import Image
+from numba import jit
 
-# ==================================================================================
-# CONFIGURATION
-# ==================================================================================
-MAX_WIDTH = 1024  # High Resolution
-THRESHOLD = int(255 * 0.6)
+try:
+    import cupy as cp
 
+    HAS_GPU = True
+except ImportError:
+    HAS_GPU = False
+    cp = None
 
-# ==================================================================================
-# 1. CPU IMAGE PROCESSOR (Parallelized)
-# ==================================================================================
-@jit(nopython=True, parallel=True)
-def cpu_process_frame(img_array, width, height, threshold):
-    """
-    Converts RGB to Binary (Black/White) using CPU Parallelism.
-    Returns a 2D array of 0s and 1s.
-    """
-    # Create output array (0=White, 1=Black)
-    output = np.zeros((width, height), dtype=np.uint8)
-
-    # Prange allows Numba to use all CPU cores automatically
-    for y in prange(height):
-        for x in range(width):
-            # Luminosity Grayscale Method
-            r = img_array[y, x, 0]
-            g = img_array[y, x, 1]
-            b = img_array[y, x, 2]
-
-            gray = 0.299 * r + 0.587 * g + 0.114 * b
-
-            # Thresholding
-            if gray <= threshold:
-                output[x, y] = 1  # Black (Box)
-            # Else remains 0 (White/Empty)
-
-    return output
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEBUG_DIR = SCRIPT_DIR / "debug_frames"
+DEBUG_DIR.mkdir(exist_ok=True)
 
 
-# ==================================================================================
-# 2. OPTIMIZED BOX FINDER (Greedy Algorithm)
-# ==================================================================================
-@jit(nopython=True)
-def find_boxes_cpu(pixels, width, height):
-    """
-    Scans the binary image to find largest rectangles.
-    Includes 'Skip Optimization' to jump over found boxes.
-    """
-    visited = np.zeros((width, height), dtype=np.bool_)
+@jit(nopython=True, fastmath=True)
+def extract_boxes_numba(mask):
+    height, width = mask.shape
     boxes = []
+
+    active_boxes = np.full(width, -1, dtype=np.int32)
 
     for y in range(height):
         x = 0
         while x < width:
-            # 1. Skip if empty or already handled
-            if visited[x, y] or pixels[x, y] == 0:
+            if mask[y, x] == 0:
+                if active_boxes[x] != -1:
+                    active_boxes[x] = -1
                 x += 1
                 continue
 
-            # 2. Found a black pixel! Expand greedily.
-            max_w = 0
-            max_h = 0
-            max_area = 0
+            start_x = x
 
-            # Measure max possible width from here
-            limit_w = 0
-            for temp_x in range(x, width):
-                if visited[temp_x, y] or pixels[temp_x, y] == 0:
-                    break
-                limit_w += 1
+            while x < width and mask[y, x] != 0:
+                if x > start_x:
+                    active_boxes[x] = -1
+                x += 1
 
-            # Scan scanlines downwards
-            current_w = limit_w
-            for h_scan in range(height - y):
-                # Check width of this specific row
-                valid_w = 0
-                for w_scan in range(current_w):
-                    if (
-                        visited[x + w_scan, y + h_scan]
-                        or pixels[x + w_scan, y + h_scan] == 0
-                    ):
-                        break
-                    valid_w += 1
+            w = x - start_x
 
-                # The box is limited by the narrowest row
-                if valid_w < current_w:
-                    current_w = valid_w
+            idx = active_boxes[start_x]
+            merged = False
 
-                if current_w == 0:
-                    break
+            if idx != -1:
+                b_x = boxes[idx][0]
+                b_w = boxes[idx][2]
 
-                area = current_w * (h_scan + 1)
-                if area > max_area:
-                    max_area = area
-                    max_w = current_w
-                    max_h = h_scan + 1
+                if b_x == start_x and b_w == w:
+                    boxes[idx] = (b_x, boxes[idx][1], b_w, boxes[idx][3] + 1)
+                    merged = True
+                else:
+                    active_boxes[start_x] = -1
 
-            # 3. Save the best box found
-            if max_w > 0 and max_h > 0:
-                # Mark as visited
-                for vy in range(y, y + max_h):
-                    for vx in range(x, x + max_w):
-                        visited[vx, vy] = True
-
-                boxes.append((x, y, max_w, max_h))
-
-                # OPTIMIZATION: Jump x forward!
-                x += max_w
-                continue
-
-            x += 1
+            if not merged:
+                new_idx = len(boxes)
+                boxes.append((start_x, y, w, 1))
+                active_boxes[start_x] = new_idx
 
     return boxes
 
 
-# ==================================================================================
-# 3. MAIN PIPELINE
-# ==================================================================================
-def process_video_frame(im: Image.Image) -> list:
-    w, h = im.size
+def weld_gaps(mask):
+    """
+    Fixes the 'Horizontal Striping' issue.
+    """
 
-    # Resize
-    ratio = w / h
-    new_h = int(MAX_WIDTH / ratio)
-    im = im.resize((MAX_WIDTH, new_h), Image.Resampling.BILINEAR)
+    v_kernel = np.ones((5, 1), np.uint8)
+    mask = cv2.dilate(mask, v_kernel, iterations=1)
 
-    # Convert to Numpy (H, W, 3)
-    img_np = np.array(im.convert("RGB"))
-    height, width, _ = img_np.shape
+    fill_kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, fill_kernel, iterations=2)
 
-    # 1. Parallel CPU Thresholding
-    binary_pixels = cpu_process_frame(img_np, width, height, THRESHOLD)
-
-    # 2. Fast Box Finding
-    boxes = find_boxes_cpu(binary_pixels, width, height)
-
-    return boxes
+    return mask
 
 
-def save_to_bin(frames_list, bin_path):
-    print(f"Serialising {len(frames_list)} frames to {bin_path}...")
+class CpuEngine:
+    def __init__(self, mode_str, debug_enabled=False):
+        self.mode = mode_str
+        self.debug_enabled = debug_enabled
+        self.frame_count = 0
+        print(f"Engine initialized: CPU (Numba) - Mode: {mode_str} (Bugfix: ON)")
 
-    with open(bin_path, "wb") as f:
-        for frame_boxes in frames_list:
-            for box in frame_boxes:
-                x, y, w, h = box
+    def process(self, frame, target_w, target_h):
+        resized = cv2.resize(
+            frame, (target_w, target_h), interpolation=cv2.INTER_NEAREST
+        )
 
-                # --- BINARY FORMAT FIX ---
-                # < = Little Endian
-                # H = u16 (0-65535) -> Fixes 1024 resolution issue
-                f.write(struct.pack("<HHHH", int(x), int(y), int(w), int(h)))
+        if self.mode == "bw":
+            gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
 
-            # Frame Delimiter (0,0,0,0)
-            f.write(struct.pack("<HHHH", 0, 0, 0, 0))
+            _, mask = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        else:
+            hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+            lower = np.array([35, 50, 50])
+            upper = np.array([85, 255, 255])
+            mask_inv = cv2.inRange(hsv, lower, upper)
+            mask = cv2.bitwise_not(mask_inv)
 
-    print("Done.")
+        mask = weld_gaps(mask)
+
+        if self.debug_enabled and self.frame_count % 60 == 0:
+            cv2.imwrite(str(DEBUG_DIR / f"frame_{self.frame_count}_cpu.png"), mask)
+
+        self.frame_count += 1
+        return extract_boxes_numba(mask)
+
+
+class GpuEngine:
+    def __init__(self, mode_str, debug_enabled=False):
+        if not HAS_GPU:
+            raise RuntimeError("CuPy not installed.")
+        self.mode = mode_str
+        self.debug_enabled = debug_enabled
+        self.frame_count = 0
+        print(f"Engine initialized: GPU (CUDA) - Mode: {mode_str} (Bugfix: ON)")
+
+    def process(self, frame, target_w, target_h):
+        resized = cv2.resize(
+            frame, (target_w, target_h), interpolation=cv2.INTER_NEAREST
+        )
+
+        if cp is None:
+            raise RuntimeError("CuPy unavailable")
+
+        gpu_frame = cp.asarray(resized)
+
+        if self.mode == "bw":
+            b = gpu_frame[:, :, 0].astype(cp.float32)
+            g = gpu_frame[:, :, 1].astype(cp.float32)
+            r = gpu_frame[:, :, 2].astype(cp.float32)
+            gray = 0.299 * r + 0.587 * g + 0.114 * b
+            mask_gpu = (gray > 127).astype(cp.uint8) * 255
+        else:
+            b = gpu_frame[:, :, 0]
+            g = gpu_frame[:, :, 1]
+            r = gpu_frame[:, :, 2]
+            is_green = (g > 90) & (g > r + 10) & (g > b + 10)
+            mask_gpu = (~is_green).astype(cp.uint8) * 255
+
+        mask_cpu = cp.asnumpy(mask_gpu)
+        mask_cpu = weld_gaps(mask_cpu)
+
+        if self.debug_enabled and self.frame_count % 60 == 0:
+            cv2.imwrite(str(DEBUG_DIR / f"frame_{self.frame_count}_gpu.png"), mask_cpu)
+
+        self.frame_count += 1
+        return extract_boxes_numba(mask_cpu)

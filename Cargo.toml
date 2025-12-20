@@ -1,57 +1,47 @@
 [package]
-name = "system-updater"
-version = "0.1.0"
+name = "pixel_shell"
+version = "1.0.0"
 edition = "2021"
 
+[features]
+res_720p = []
+res_1080p = []
+res_1440p = []
+res_2160p = []
+
 [dependencies]
-# Audio Engine (Keep default features off to reduce size, only enable what we need)
+# Audio Engine (Optimized for size)
 kira = { version = "0.8.7", default-features = false, features = ["cpal", "ogg"] }
 
-# Windows API (Updated to 0.52.0)
+# Windows API (Stripped to only necessary UI and Audio components)
 [dependencies.windows]
 version = "0.52.0"
 features = [
-    # Core
     "Win32_Foundation",
-    "Win32_System_SystemServices",
-
-    # Windowing & Graphics
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
     "Win32_UI_HiDpi",
-    "Win32_UI_Shell",
     "Win32_System_LibraryLoader",
-
-    # Audio & Volume Control (The Missing Links)
+    "Win32_Media",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage", # <--- REQUIRED for Activate()
-    "Win32_System_Variant",               # <--- REQUIRED for Volume types
-    "Win32_System_Ole",                   # <--- Helper for COM
-
-    # Console Hiding
-    "Win32_System_Console",
-
-    "Win32_Security",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
     "Win32_System_Threading"
 ]
 
-# Build Script for Icon/Metadata
 [build-dependencies]
 winres = "0.1.12"
 
 [package.metadata.winres]
-FileDescription = "System Update Service"  # Disguise the description
-ProductName = "A troll virus"
-CompanyName = "ShineeKun"      # (Optional: for the bit)
+FileDescription = "Pixel Shell Overlay Service"
+ProductName = "Pixel Shell"
+CompanyName = "ShineeKun"
 
-# ===========================================================================
-#  BINARY SIZE OPTIMIZATION PROFILE
-# ===========================================================================
 [profile.release]
-opt-level = "z"     # Optimize strictly for binary size
-lto = true          # Enable Link Time Optimization (removes unused code)
-codegen-units = 1   # Reduce parallel code generation for better optimization
-panic = "abort"     # Disable stack unwinding (removes panic bloat)
-strip = true        # Strip symbols (makes it harder to reverse engineer)
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

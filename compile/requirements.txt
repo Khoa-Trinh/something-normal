@@ -1,0 +1,6 @@
+yt-dlp
+opencv-python
+tqdm
+numba
+numpy
+cupy-cuda12x
