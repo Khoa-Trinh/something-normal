@@ -1,159 +1,141 @@
-# Pixel Shell
+# ✨ Pixel Shell
 
-**Pixel Shell** is a high-performance, transparent desktop overlay engine written in Rust. It is designed to play silhouette-style animations (like _Bad Apple!!_) directly on your Windows desktop at 60FPS+ with zero background interference.
+**High-Performance Desktop Overlay Engine & Asset Factory**
 
-Unlike standard video players, Pixel Shell uses a custom **Sparse Binary Format (.bin)** to render only the active pixels, allowing it to bypass standard window composition limitations and "flicker" issues.
+Pixel Shell is a specialized engine designed to render high-framerate, transparent video overlays on Windows with minimal resource usage. It utilizes a custom **"Snowplow" RLE compression algorithm** to render uncompressed video frames directly via GDI, bypassing standard video players for absolute background transparency.
 
----
-
-## 🚀 Key Features
-
-### 🦀 Rust Renderer (The Engine)
-
-- **Direct Memory Access (GDI):** Uses `CreateDIBSection` to write pixels directly to a raw buffer in RAM, bypassing thousands of slow GDI system calls.
-- **Atomic Updates:** Utilizes `UpdateLayeredWindow` with Alpha Blending for tear-free, VSync-locked rendering.
-- **Zero-Copy Logic:** Efficiently parses binary frame data with almost zero CPU overhead by iterating through raw coordinate slices.
-- **Kira Audio:** Integrated low-latency audio synchronization with high-precision clocking.
-
-### 🐍 Python Pipeline (The Factory)
-
-- **Smart Downloader:** Preprocesses videos using `yt-dlp` and `ffmpeg` with Lanczos Upscaling and High-Contrast Thresholding to create perfect binary source material.
-- **"Snowplow" Algorithm:** A custom Numba-optimized RLE extractor that clears stale memory states between rows to prevent vertical artifacting.
-- **"Gap Welding":** Automatically fuses horizontal striping artifacts using vertical morphological dilation.
-- **GPU Acceleration:** Optional NVIDIA CUDA support (via CuPy) for ultra-fast high-resolution processing.
+The project features a unique **Binary Patching Architecture**: instead of compiling code for every video, the CLI injects compressed asset data directly into a pre-compiled generic **Runner** executable, creating standalone, portable `.exe` files instantly.
 
 ---
 
-## 🛠️ Prerequisites
+## 📥 Download Pre-built Binaries
 
-- **Rust:** [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-- **Python 3.10+:** [https://www.python.org/downloads/](https://www.python.org/downloads/)
-- **FFmpeg:** Must be installed and added to your system `PATH`.
-- **Visual Studio Build Tools:** Required for the `windows-rs` crate (Select **Desktop development with C++**).
+Don’t want to build from source?
 
----
+You can download the latest ready-to-use versions of the CLI Factory and the Runner Template directly from **GitHub Releases**.
 
-## 📦 Installation
+- Download **ps-cli.exe** (The Builder Tool)
+- Download **ps-runner.exe** (The Template)
 
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-username/pixel-shell.git
-cd pixel-shell
-```
-
-### 2. Install Python Dependencies
-
-```bash
-cd compile
-pip install -r requirements.txt
-```
-
-Optional (NVIDIA GPU acceleration):
-
-```bash
-pip install cupy-cuda12x
-```
-
-### 3. Build the Rust Project
-
-```bash
-cd ..
-cargo build --release
-```
+Place them in the same folder, and you are ready to go.
 
 ---
 
-## 🎬 Usage Workflow
+## 🚀 Features
 
-### Step 1: Download & Prep Video
-
-This script forces the source into a **Binary-Safe** format (pure black & white, no motion blur).
-
-```bash
-cd compile
-python download-video.py
-```
-
-- Paste your YouTube URL
-- Choose resolution (e.g. 1080p)
-- FPS Strategy: **[1] 30 FPS (Native)**
-
-> Native frames are sharper and prevent ghosting artifacts in the binary detector.
-
----
-
-### Step 2: Convert to BIN
-
-Analyzes frames and compiles them into the sparse `.bin` coordinate format.
-
-```bash
-python video-to-bin.py
-```
-
-- Select project folder
-- Choose **CPU** or **GPU** (if available)
-
-Output:
-
-```
-assets/<project_name>/<project_name>.bin
-```
-
----
-
-### Step 3: Run the Overlay
-
-Update the `.bin` path in `main.rs` or `build.py`, then run:
-
-```bash
-cd ..
-cargo run --release
-```
+- ⚡ **Zero-Copy Rendering** — Custom `.bin` format optimized for CPU-based sparse rendering
+- 🔊 **Audio Sync** — High-priority audio thread using `kira` for precise A/V synchronization
+- 📦 **Standalone Output** — Generates single-file `.exe` overlays with no external dependencies
+- 🛠️ **All-in-One CLI** — Download, Convert, Debug, and Build in one tool
+- 🛡️ **Watchdog Mode** — Automatically restarts overlays if they crash or are closed
 
 ---
 
 ## 📂 Project Structure
 
-```
+This is a Cargo workspace organized into applications and shared libraries.
+
+```text
 pixel-shell/
-├── assets/               # Raw videos & generated .bin files
-├── compile/              # Python Processing Pipeline
-│   ├── download-video.py # High-Contrast FFmpeg Preprocessor
-│   ├── video-to-bin.py   # Sparse Coordinate Converter
-│   ├── helpers.py        # Snowplow & Gap Welding logic
-│   └── debug_bin.py      # Bin visualizer / inspector
-├── src/                  # Rust Renderer Source
-│   ├── main.rs           # GDI rendering & window logic
-│   ├── window.rs         # Shared constants
-│   └── audio.rs          # Kira audio implementation
-├── Cargo.toml            # Rust dependency manifest
-└── build.py              # Automation script
+├── .github/workflows/   # CI/CD pipelines
+├── apps/
+│   ├── ps-cli/          # Command Line Interface (user tool)
+│   ├── ps-gui/          # Experimental GUI frontend
+│   └── ps-runner/       # Template EXE (player engine)
+├── crates/
+│   ├── ps-core/         # Shared data structures (PixelRect, headers)
+│   └── ps-factory/      # Binary building & patching logic
+├── target/              # Build artifacts
+├── pixel-shell.ico      # Application icon
+└── Cargo.toml           # Workspace configuration
+```
+
+---
+
+## 🛠️ Building from Source
+
+If you want to contribute or modify the engine, follow these steps.
+
+### Prerequisites
+
+- Rust (via Rustup)
+- FFmpeg & FFprobe (required for asset conversion)
+- yt-dlp (required for downloading source material)
+
+### Compilation
+
+Since the Factory CLI relies on the Runner template existing at runtime, you must build both.
+
+```bash
+git clone https://github.com/Khoa-Trinh/PixelShell.git
+cd PixelShell
+cargo build --release
+```
+
+### Assemble the Toolset
+
+Create a working folder (e.g., `PixelShellTool`) and copy the artifacts:
+
+- `target/release/ps-cli.exe` -> `PixelShellTool/ps-cli.exe`
+- `target/release/ps-runner.exe` -> `PixelShellTool/ps-runner.exe`
+
+---
+
+## 🎮 CLI Usage Guide
+
+Open a terminal in the folder containing the executables.
+
+### 1. Download Content
+
+Downloads a video, extracts audio, and prepares it for processing.
+
+```bash
+ps-cli.exe (with interative prompts)
+# or using direct arguments
+ps-cli.exe download --url "https://youtu.be/..." --resolution 1080p --project "my_overlay"
+```
+
+### 2. Convert Assets
+
+Transcodes video frames into the optimized `.bin` format using the Snowplow algorithm.
+
+```bash
+ps-cli.exe convert (with interative prompts)
+# or using direct arguments
+ps-cli.exe convert --project "my_overlay" --resolutions "1080p,720p" --use-gpu
+```
+
+### 3. Build Standalone EXE
+
+Injects converted assets into the runner template.
+
+```bash
+ps-cli.exe build (with interative prompts)
+# or using direct arguments
+ps-cli.exe build --project "my_overlay" --resolutions "1080p,720p"
+# Output will be placed in the /dist folder
+```
+
+### 4. Run the Overlay
+
+Run via command line instead of double-clicking the exe will enable Watchdog mode.
+
+```bash
+ps-cli.exe run (with interative prompts)
+# or using direct arguments
+ps-cli.exe run --target "my_overlay_1080p.exe" (name of the generated exe)
+# Output will be placed in the /dist folder
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Q: The video is flickering or stuttering**
-
-- Ensure you are running with `--release`
-- Renderer must stay under **16.6ms per frame**
-- On multi-monitor setups, size the window to `SM_CXSCREEN` instead of the virtual screen
-
-**Q: Horizontal stripes or gaps appear**
-
-- Confirm you are using the **Snowplow** version of `helpers.py`
-- Ensure `active_boxes` is cleared per row
-- Verify **Gap Welding** is enabled
-
-**Q: Red snow / noise pixels**
-
-- Source video contains compression artifacts
-- Re-run `download-video.py` with high-contrast filtering enabled
+- **Template not found** — Ensure `ps-runner.exe` is in the same folder as the CLI executable
+- **FFmpeg not found** — Run `ffmpeg -version` and verify your PATH configuration
 
 ---
 
 ## 📜 License
 
-MIT License
+This project is licensed under the **MIT License**.

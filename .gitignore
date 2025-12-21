@@ -1,6 +1,2 @@
 /target
 .cargo/config
-/compile/__pycache__/
-/dist/
-/compile/debug_frames/
-/assets/**/*.bin

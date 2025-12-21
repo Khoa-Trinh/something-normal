@@ -1,0 +1,15 @@
+[package]
+name = "ps-factory"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ps-core = { path = "../ps-core" }
+anyhow = "1.0"           # Easy error handling
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"       # For parsing ffprobe output
+dialoguer = "0.11"       # For the interactive menus
+which = "6.0"            # To check if ffmpeg/yt-dlp exist
+indicatif = "0.17"
+minifb = "0.24"
+byteorder = "1.5"
